@@ -1,0 +1,1742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>LinkedIn Toss</title>
+<style>
+  /* ---------- Apple-style design tokens ---------- */
+  :root {
+    --font: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --round: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --label: #1d1d1f;
+    --label2: rgba(60,60,67,.62);
+    --label3: rgba(60,60,67,.36);
+    --sep: rgba(60,60,67,.14);
+    --blue: #0a84ff;
+    --blue-deep: #0071e3;
+    --green: #30d158;
+    --red: #ff453a;
+    --orange: #ff9f0a;
+    --glass: rgba(255,255,255,.62);
+    --glass-strong: rgba(255,255,255,.8);
+    --bubble-in: #e9e9eb;
+    --shadow: 0 8px 30px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; color: var(--label); font-family: var(--font);
+    -webkit-font-smoothing: antialiased; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+    background: #fff;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #gl { touch-action: none; cursor: grab; }
+  #gl.aiming { cursor: grabbing; }
+  #fx { pointer-events: none; }
+  .glass {
+    background: var(--glass); border: .5px solid rgba(255,255,255,.7);
+    backdrop-filter: saturate(180%) blur(22px); -webkit-backdrop-filter: saturate(180%) blur(22px);
+    box-shadow: var(--shadow);
+  }
+
+  /* ---------- Scoreboard ---------- */
+  #hud {
+    position: fixed; top: 14px; left: 14px; z-index: 5; display: flex; align-items: stretch;
+    border-radius: 24px; padding: 6px; gap: 0; pointer-events: none; isolation: isolate;
+  }
+  /* Liquid Glass: almost-clear body, light blur, bright specular rim, gentle refraction layer */
+  .liquid {
+    background: linear-gradient(135deg, rgba(255,255,255,.42) 0%, rgba(255,255,255,.12) 45%, rgba(255,255,255,.28) 100%);
+    backdrop-filter: blur(4px) saturate(190%) brightness(1.03); -webkit-backdrop-filter: blur(4px) saturate(190%) brightness(1.03);
+    border: 1px solid rgba(255,255,255,.6);
+    box-shadow:
+      inset 1.5px 1.5px 0 rgba(255,255,255,.95),
+      inset -1px -1px 0 rgba(255,255,255,.55),
+      inset 0 0 22px rgba(255,255,255,.45),
+      inset 0 -10px 24px rgba(160,170,190,.12),
+      0 12px 32px rgba(0,0,0,.10), 0 2px 6px rgba(0,0,0,.06), 0 0 0 .5px rgba(0,0,0,.06);
+    position: relative;
+  }
+  .liquid::before { /* refraction: distorts whatever is behind the glass (Chromium) */
+    content: ""; position: absolute; inset: 0; border-radius: inherit; z-index: -1; pointer-events: none;
+    backdrop-filter: url(#liquid-refract); -webkit-backdrop-filter: none;
+  }
+  .liquid::after {  /* specular highlight sweeping across the top-left */
+    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    background:
+      radial-gradient(120% 70% at 18% -10%, rgba(255,255,255,.85) 0%, rgba(255,255,255,0) 45%),
+      radial-gradient(60% 50% at 100% 120%, rgba(255,255,255,.35) 0%, rgba(255,255,255,0) 60%);
+    mix-blend-mode: soft-light;
+  }
+  .stat { padding: 6px 14px 7px; text-align: left; position: relative; min-width: 70px; }
+  .stat + .stat::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: .5px; background: var(--sep); }
+  .stat span { display: block; font-size: 11px; font-weight: 500; color: var(--label2); letter-spacing: -.01em; }
+  .stat b { display: block; font: 700 22px/1.15 var(--round); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .stat b small { font-size: 14px; font-weight: 600; color: var(--label3); }
+  .stat.bump b { animation: bump .4s cubic-bezier(.3,1.6,.5,1); }
+  @keyframes bump { 40% { transform: scale(1.18); color: var(--blue); } }
+  #mute {
+    pointer-events: auto; align-self: center; margin: 0 4px 0 6px; width: 38px; height: 38px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.7); display: grid; place-items: center; cursor: pointer; color: var(--label);
+    background: linear-gradient(160deg, rgba(255,255,255,.7), rgba(235,237,242,.35));
+    box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 rgba(255,255,255,.4), 0 2px 8px rgba(0,0,0,.08);
+  }
+  #mute svg { width: 18px; height: 18px; }
+
+  /* ---------- Dynamic-Island style event pill ---------- */
+  #island {
+    position: fixed; top: 92px; left: 50%; z-index: 7; transform: translateX(-50%) scale(.6); opacity: 0;
+    background: #000; color: #fff; border-radius: 999px; padding: 10px 18px 10px 12px;
+    display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; letter-spacing: -.01em;
+    max-width: min(560px, calc(100vw - 28px)); box-shadow: 0 10px 30px rgba(0,0,0,.25);
+    transition: transform .45s cubic-bezier(.3,1.4,.5,1), opacity .2s; pointer-events: none;
+  }
+  #island.show { transform: translateX(-50%) scale(1); opacity: 1; }
+  #island .dot { width: 26px; height: 26px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 14px; background: #3a3a3c; }
+  #island.req .dot { background: var(--red); }
+  #island.referral .dot { background: var(--green); }
+  #island.ghost .dot { background: #636366; }
+
+  /* ---------- Recruiter message pop-up (one at a time) ---------- */
+  #toast {
+    position: fixed; left: 50%; top: 14px; z-index: 6; width: min(420px, calc(100vw - 24px));
+    transform: translate(-50%, -20px); opacity: 0; transition: transform .35s cubic-bezier(.2,1.2,.4,1), opacity .25s;
+    background: #fff; border: 1px solid var(--line, #e6e9ee); border-radius: 14px; padding: 10px 14px 11px 56px;
+    box-shadow: 0 10px 30px rgba(20,30,50,.12); pointer-events: none; min-height: 58px;
+  }
+  #toast.show { transform: translate(-50%, 0); opacity: 1; }
+  #toast .avatar {
+    position: absolute; left: 12px; top: 11px; width: 34px; height: 34px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 17px; background: #e8eef8;
+  }
+  #toast .from { font-size: 11px; font-weight: 700; opacity: .5; }
+  #toast .msg { font-size: 14px; line-height: 1.32; margin-top: 2px; }
+  #toast.good .avatar { background: #fde7d9; }
+  #toast.ghost .avatar { background: #eee; }
+
+  /* ---------- Floating "+2" ---------- */
+  .floater {
+    position: fixed; z-index: 6; pointer-events: none; white-space: nowrap; transform: translate(-50%, -50%);
+    font: 900 40px/1 var(--round); letter-spacing: -.02em;
+    -webkit-text-stroke: 5px #fff; paint-order: stroke fill;          /* white outline, like before */
+    text-shadow: 0 3px 10px rgba(0,0,0,.18);
+    animation: floatUp 1.5s cubic-bezier(.2,.8,.3,1) forwards;
+  }
+  .floater.small { font-size: 22px; -webkit-text-stroke: 4px #fff; }
+  @keyframes floatUp {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(.4); }
+    15%  { opacity: 1; transform: translate(-50%, -80%) scale(1.15); }
+    25%  { transform: translate(-50%, -90%) scale(1); }
+    75%  { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -260%) scale(1); }
+  }
+
+  /* ---------- Sheets (start / end) ---------- */
+  .screen {
+    position: fixed; inset: 0; z-index: 10; display: none; align-items: center; justify-content: center; padding: 16px;
+    background: rgba(210,210,215,.35); backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
+    overflow-y: auto;
+  }
+  .screen.show { display: flex; animation: fade .3s ease; }
+  @keyframes fade { from { opacity: 0; } }
+  .sheet {
+    width: min(420px, 100%); border-radius: 28px; padding: 26px 22px 22px; margin: auto; text-align: center;
+    background: rgba(255,255,255,.78); animation: rise .5s cubic-bezier(.2,1.2,.4,1);
+  }
+  @keyframes rise { from { transform: translateY(30px) scale(.97); opacity: 0; } }
+  .appicon {
+    width: 88px; height: 88px; margin: 0 auto 14px; border-radius: 21px; overflow: hidden;
+    box-shadow: 0 12px 26px rgba(40,40,60,.16), 0 2px 5px rgba(40,40,60,.08), inset 0 0 0 .5px rgba(0,0,0,.06);
+  }
+  .appicon svg { width: 100%; height: 100%; display: block; }
+  .sheet h1 { margin: 0; font: 700 30px/1.1 var(--font); letter-spacing: -.03em; }
+  .sheet .sub { margin: 6px 0 20px; color: var(--label2); font-size: 15px; }
+  .group { background: rgba(255,255,255,.85); border-radius: 14px; text-align: left; overflow: hidden; margin-bottom: 18px; box-shadow: 0 0 0 .5px var(--sep); }
+  .cell { display: flex; align-items: center; gap: 12px; padding: 11px 14px; position: relative; font-size: 15px; }
+  .cell + .cell::before { content: ""; position: absolute; top: 0; right: 0; left: 50px; height: .5px; background: var(--sep); }
+  .cell .ico { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: #fff; flex: none; font-size: 14px; }
+  .cell .grow { flex: 1; min-width: 0; }
+  .cell .grow small { display: block; color: var(--label2); font-size: 12.5px; margin-top: 1px; }
+  .cell .val { color: var(--label2); text-align: right; font-size: 14px; }
+  .cell .chev { color: var(--label3); font-size: 18px; }
+  .btn {
+    display: block; width: 100%; border: 0; cursor: pointer; font: 600 17px var(--font); letter-spacing: -.01em; color: #fff;
+    background: var(--blue-deep); padding: 15px; border-radius: 14px; transition: transform .15s, filter .15s;
+  }
+  .btn:active { transform: scale(.98); filter: brightness(.92); }
+  .foot { font-size: 12px; color: var(--label2); margin-top: 12px; line-height: 1.45; }
+
+  .widgets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 18px 0; }
+  .widget { background: rgba(255,255,255,.85); border-radius: 16px; padding: 10px 8px 9px; text-align: left; box-shadow: 0 0 0 .5px var(--sep); }
+  .widget span { display: block; font-size: 11px; color: var(--label2); font-weight: 500; }
+  .widget b { display: block; font: 700 22px/1.2 var(--round); letter-spacing: -.02em; margin-top: 2px; }
+
+  /* Offer letter, styled like a Mail message */
+  /* End screen: side panel + letter side by side; stacked on phones; always scaled to fit */
+  #end { overflow: hidden; }
+  #end .endsheet {
+    position: absolute; left: 50%; top: 50%; margin: 0; transform: translate(-50%, -50%);
+    width: min(900px, calc(100vw - 24px)); padding: 22px; text-align: left;
+    display: grid; grid-template-columns: 270px 1fr; grid-template-areas: "side letter" "btn letter";
+    grid-template-rows: 1fr auto; column-gap: 22px; row-gap: 14px; animation: fade .35s ease;
+  }
+  #end .side { grid-area: side; }
+  #end .letter { grid-area: letter; margin: 0; }
+  #end .btn { grid-area: btn; align-self: end; }
+  #end h1 { font-size: 26px; }
+  #end .widgets { grid-template-columns: repeat(2, 1fr); margin: 14px 0 0; }
+  @media (max-width: 760px) {
+    #end .endsheet {
+      grid-template-columns: 1fr; grid-template-areas: "side" "letter" "btn"; grid-template-rows: auto;
+      padding: 14px; row-gap: 10px; width: calc(100vw - 20px); border-radius: 22px;
+    }
+    #end h1 { font-size: 20px; text-align: center; }
+    #end .widgets { grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+    #end .widget { padding: 6px 8px; border-radius: 12px; }
+    #end .widget span { font-size: 9.5px; }
+    #end .widget b { font-size: 16px; }
+    #end .letter { font-size: 11px; line-height: 1.45; padding: 16px 16px 14px; }
+    #end .letter .co { font-size: 12px; }
+    #end .letter hr { margin: 8px 0 10px; }
+    #end .letter .date, #end .letter .to { margin-bottom: 8px; }
+    #end .letter p { margin-bottom: 7px; }
+    #end .letter .role { font-size: 14px; }
+    #end .letter .note { margin-bottom: 6px; }
+    #end .letter table { margin: 2px 0 8px; }
+    #end .letter td { padding: 1px 0; }
+    #end .letter td:first-child { width: 72px; }
+    #end .letter .sign { font-size: 18px; }
+    #end .btn { padding: 13px; }
+  }
+
+  /* Offer letter: a typed letter on real paper */
+  .letter {
+    position: relative; text-align: left; color: #222; margin: 0 0 16px;
+    font: 400 12.5px/1.55 var(--font);
+    background:
+      linear-gradient(180deg, rgba(0,0,0,0) 49.6%, rgba(0,0,0,.035) 50%, rgba(255,255,255,.6) 50.4%, rgba(0,0,0,0) 51%),  /* fold */
+      radial-gradient(140% 100% at 30% 0%, #fffefa 0%, #fbf8f0 60%, #f4efe3 100%);
+    border: 1px solid #ebe5d6; border-radius: 2px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.05);
+    padding: 26px 26px 22px;
+  }
+  .letter .lh { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .letter .co { font-weight: 700; font-size: 14px; letter-spacing: .14em; color: #1d1d1f; }
+  .letter .co small { display: block; font-weight: 400; letter-spacing: .02em; font-size: 10.5px; color: #8a8a8e; margin-top: 2px; }
+  .letter .mark { width: 30px; height: 30px; border-radius: 7px; background: #1d1d1f; color: #fbf8f0; display: grid; place-items: center; font-weight: 700; font-size: 15px; flex: none; }
+  .letter hr { border: 0; border-top: 1px solid #d9d2c1; margin: 12px 0 14px; }
+  .letter .date { color: #555; margin-bottom: 12px; }
+  .letter .to { margin-bottom: 14px; }
+  .letter p { margin: 0 0 10px; }
+  .letter .role { font-weight: 700; font-size: 16px; margin: 2px 0 2px; color: #111; }
+  .letter .note { font-style: italic; color: #666; margin-bottom: 10px; }
+  .letter table { border-collapse: collapse; margin: 4px 0 12px; width: 100%; }
+  .letter td { padding: 3px 0; vertical-align: top; }
+  .letter td:first-child { width: 92px; color: #666; }
+  .letter .sign { font: italic 300 22px/1.2 var(--font); color: #0b3d91; margin: 2px 0 0; }
+  .letter .who { color: #555; }
+  .letter .stamp {
+    position: absolute; right: 20px; bottom: 30px; transform: rotate(-12deg);
+    border: 2.5px solid currentColor; border-radius: 6px; padding: 4px 10px;
+    font: 800 13px/1 var(--font); letter-spacing: .14em; text-transform: uppercase; opacity: .82;
+    mix-blend-mode: multiply;
+  }
+  .letter .stamp.bad { color: #c8261b; }
+  .letter .stamp.meh { color: #c26a00; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 600; }
+  .pill.bad { background: rgba(255,69,58,.12); color: #d70015; }
+  .pill.meh { background: rgba(255,159,10,.15); color: #c93400; }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  #err { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 24px; z-index: 20; }
+
+  /* ---------- Phones ---------- */
+  @media (max-width: 700px) {
+    #hud { left: 10px; right: 10px; top: 10px; justify-content: space-between; border-radius: 16px; padding: 4px; }
+    .stat { min-width: 0; padding: 5px 8px 6px; flex: 1; }
+    .stat span { font-size: 10px; }
+    .stat b { font-size: 18px; }
+    .stat b small { font-size: 12px; }
+    #mute { width: 32px; height: 32px; margin: 0 2px; }
+    #island { top: 150px; }
+    #toast { top: 74px; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gl" aria-label="LinkedIn Toss game area"></canvas>
+<canvas id="fx"></canvas>
+<!-- SVG filter used by the Liquid Glass refraction layer -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="liquid-refract" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.012 0.02" numOctaves="2" seed="7" result="noise"/>
+    <feGaussianBlur in="noise" stdDeviation="2" result="soft"/>
+    <feDisplacementMap in="SourceGraphic" in2="soft" scale="22" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
+
+<div id="hud" class="liquid">
+  <div class="stat" id="st-score"><span>Score</span><b>0</b></div>
+  <div class="stat" id="st-streak"><span>Streak</span><b>0</b></div>
+  <div class="stat" id="st-made"><span>Made</span><b>0</b></div>
+  <div class="stat" id="st-sent"><span>Sent</span><b>0<small>/20</small></b></div>
+  <button id="mute" aria-label="Toggle sound"></button>
+</div>
+
+<div id="island"><div class="dot"></div><div class="txt"></div></div>
+<div id="toast" aria-live="polite"><div class="avatar">📨</div><div class="from"></div><div class="msg"></div></div>
+
+<!-- Start sheet -->
+<div class="screen show" id="start">
+  <div class="sheet glass">
+    <div class="appicon">
+      <svg viewBox="0 0 88 88" aria-label="LinkedIn Toss icon">
+        <defs>
+          <linearGradient id="ai-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fdfdff"/><stop offset="1" stop-color="#e4e8f1"/></linearGradient>
+          <linearGradient id="ai-board" x1="0" y1="0" x2=".3" y2="1"><stop offset="0" stop-color="#4a4e56"/><stop offset=".55" stop-color="#25272c"/><stop offset="1" stop-color="#16171a"/></linearGradient>
+          <linearGradient id="ai-rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb07a"/><stop offset=".5" stop-color="#ff6b2c"/><stop offset="1" stop-color="#e04a12"/></linearGradient>
+          <linearGradient id="ai-rimback" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9531b"/><stop offset="1" stop-color="#b8400f"/></linearGradient>
+          <radialGradient id="ai-ball" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#ffffff"/><stop offset=".6" stop-color="#f3efe6"/><stop offset="1" stop-color="#d9d2c2"/></radialGradient>
+          <radialGradient id="ai-shadow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#5a6070" stop-opacity=".35"/><stop offset="1" stop-color="#5a6070" stop-opacity="0"/></radialGradient>
+          <filter id="ai-soft" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="2.2" stdDeviation="2" flood-color="#1b1d24" flood-opacity=".28"/></filter>
+        </defs>
+        <rect width="88" height="88" fill="url(#ai-bg)"/>
+        <ellipse cx="62" cy="78" rx="15" ry="3.2" fill="url(#ai-shadow)"/>
+        <!-- backboard -->
+        <g filter="url(#ai-soft)">
+          <rect x="14" y="10" width="54" height="34" rx="9" fill="url(#ai-board)"/>
+          <rect x="15.2" y="11.2" width="51.6" height="31.6" rx="8" fill="none" stroke="#fff" stroke-opacity=".14" stroke-width="1.2"/>
+          <path d="M20 13 h18 l-8 18 h-12 z" fill="#fff" opacity=".07"/>
+          <rect x="31" y="22" width="20" height="14" rx="3.5" fill="none" stroke="url(#ai-rim)" stroke-width="2.6"/>
+          <rect x="20" y="15.5" width="6" height="6" rx="1.6" fill="#2f80ff" transform="rotate(-12 23 18.5)"/>
+          <rect x="56" y="16.5" width="6" height="6" rx="1.6" fill="#2f80ff" transform="rotate(14 59 19.5)"/>
+          <rect x="57.5" y="31" width="5.5" height="5.5" rx="1.5" fill="#2f80ff" transform="rotate(-8 60 33.5)"/>
+        </g>
+        <!-- rim back, net, rim front -->
+        <path d="M27 42.5 a14 4.4 0 0 1 28 0" fill="none" stroke="url(#ai-rimback)" stroke-width="3.6" stroke-linecap="round"/>
+        <g stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" fill="none" filter="url(#ai-soft)">
+          <path d="M28 44 L33 58 M33.5 45.5 L36.5 59 M41 46.6 L41 59.5 M48.5 45.5 L45.5 59 M54 44 L49 58"/>
+          <path d="M28 44 L36.5 59 M33.5 45.5 L41 59.5 M41 46.6 L45.5 59 M48.5 45.5 L49 58 M54 44 L45.5 59 M48.5 45.5 L41 59.5 M41 46.6 L36.5 59 M33.5 45.5 L33 58" stroke-opacity=".75"/>
+          <path d="M33 58.2 Q41 61.5 49 58.2" />
+        </g>
+        <path d="M27 42.5 a14 4.4 0 0 0 28 0" fill="none" stroke="url(#ai-rim)" stroke-width="3.8" stroke-linecap="round" filter="url(#ai-soft)"/>
+        <path d="M30 44.6 a12 3 0 0 0 9 1.8" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="1.1" stroke-linecap="round"/>
+        <!-- crumpled paper ball -->
+        <g filter="url(#ai-soft)">
+          <path d="M53 63 L57 55.5 L64.5 54 L71 58 L73 65 L69.5 72 L62 74.5 L55 71.5 Z" fill="url(#ai-ball)"/>
+          <path d="M57 55.5 L61 62 L64.5 54 Z" fill="#ffffff"/>
+          <path d="M61 62 L71 58 L73 65 Z" fill="#e7e1d3"/>
+          <path d="M61 62 L73 65 L69.5 72 Z" fill="#ddd6c6"/>
+          <path d="M53 63 L61 62 L55 71.5 Z" fill="#f0ebe0"/>
+          <path d="M61 62 L69.5 72 L62 74.5 L55 71.5 Z" fill="#e9e3d6"/>
+          <path d="M57 55.5 L61 62 L53 63" fill="none" stroke="#c9c1ae" stroke-width=".7"/>
+          <path d="M64.5 54 L61 62 L71 58 M61 62 L62 74.5" fill="none" stroke="#c9c1ae" stroke-width=".7"/>
+          <path d="M56.5 64 l5 -.6 M57 66.4 l6.5 -.4 M63.5 64.8 l5 1" stroke="#0a84ff" stroke-opacity=".35" stroke-width=".9" stroke-linecap="round"/>
+          <path d="M58 68.6 l7 .2 M64 70 l4 -1.2" stroke="#6e6e73" stroke-opacity=".35" stroke-width=".8" stroke-linecap="round"/>
+        </g>
+      </svg>
+    </div>
+    <h1>LinkedIn Toss</h1>
+    <p class="sub">A real simulation of LinkedIn job listings.</p>
+    <div class="group">
+      <div class="cell">
+        <div class="ico" style="background:#0a84ff">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 1.5h5l3.5 3.5v9a1 1 0 0 1-1 1h-7.5a1 1 0 0 1-1-1V2.5a1 1 0 0 1 1-1z" fill="#fff"/><path d="M9 1.5V5h3.5" fill="#cfe4ff"/></svg>
+        </div>
+        <div class="grow">Your hopes and dreams uploaded<small>Ready to crumple</small></div>
+        <div class="chev">›</div>
+      </div>
+      <div class="cell">
+        <div class="ico" style="background:#30d158">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 13V4m0 0L4.5 7.5M8 4l3.5 3.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="grow">Pull down, then let go<small>Drag sideways to aim</small></div>
+      </div>
+      <div class="cell">
+        <div class="ico" style="background:#ff9f0a">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="#fff" stroke-width="2"/><path d="M8 5v3l2 1.5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </div>
+        <div class="grow">20 applications<small>Score and it goes straight in the bin</small></div>
+      </div>
+    </div>
+    <button class="btn" id="play">Play</button>
+    <div class="foot">Results may reflect the actual job market.</div>
+  </div>
+</div>
+
+<!-- End sheet -->
+<div class="screen" id="end">
+  <div class="sheet glass endsheet">
+    <div class="side">
+      <h1>Hiring Season Over</h1>
+      <div class="widgets" id="endStats"></div>
+    </div>
+    <div class="letter" id="letter"></div>
+    <button class="btn" id="again">Apply Again</button>
+  </div>
+</div>
+
+<div id="err"><div><h2>Couldn't load the 3D engine</h2><p>LinkedIn Toss needs Three.js from cdnjs. Check your connection and reload.</p></div></div>
+
+<!-- Three.js (r128) renders the 3D scene. Physics is hand-rolled below. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+'use strict';
+if (!window.THREE) { document.getElementById('err').style.display = 'grid'; return; }
+const V3 = THREE.Vector3;
+
+/* =====================================================================
+   CONFIG: tweak game feel here. Units are meters and seconds.
+   z points from the player toward the hoop, y is up.
+   ===================================================================== */
+const CFG = {
+  gravity: 9.81,
+  airDrag: 0.05,          // fraction of velocity lost per second
+  ballR: 0.1,             // crumpled resume radius
+  launchAngle: 52,        // degrees above horizontal
+  minSpeed: 4.0,          // m/s at the smallest pull
+  maxSpeed: 11.5,         // m/s at full pull
+  aimSpread: 2.2,         // sideways m/s at full sideways drag
+  rimR: 0.25,             // rim radius (to the tube centre) at game start
+  rimMinR: 0.17,
+  rimShrink: 0.025,       // per "requirements update"
+  rimTube: 0.028,         // chunky, toy-like rim
+  rimRest: 0.5, boardRest: 0.55, floorRest: 0.38, canRest: 0.35,
+  totalThrows: 20,
+  ghostChance: 0.14,      // "Ghosted": hoop vanishes mid-flight
+  referralChance: 0.14,   // "Referral": rim 1.5x for one shot
+  stickerCount: [7, 9],
+  exposure: 0.8,          // overall scene brightness: lower = darker
+};
+
+// Fixed scene positions (hoop offsets are added on top of these)
+const RIM_Y = 3.05;
+const BOARD = { z: 5.0, w: 1.8, y0: 2.9, y1: 3.95, t: 0.1 };
+const CAN = { h: 0.74, rTop: 0.3, rBot: 0.25, lip: 0.035 };
+const BALL_REST = new V3(0, 1.4, -1.05);
+const CAM_POS = new V3(0, 1.6, -2.4);
+const CAM_LOOK = new V3(0, 2.6, 4.6);
+
+/* =====================================================================
+   COPY: all the jokes live here
+   ===================================================================== */
+const MSG = {
+  reject: [ // you scored... and it went straight in the bin
+    "Thanks for applying! We've decided to move forward with other candidates.",
+    "Great shot! Unfortunately, the position has been filled internally.",
+    "We were impressed by your skills. Too impressed. Rejected.",
+    "You're a great fit! For a different role we're not hiring for.",
+    "We'll keep your resume on file. (The file is the trash can.)",
+    "Congrats on passing round 1 of 9! Round 2 is an unpaid take-home project.",
+    "Love the hustle. Sadly, the role was automated away this morning.",
+    "We went with someone who has 15 years in a 3-year-old framework.",
+    "Nailed it! The hiring manager is on sabbatical until further notice.",
+    "Offer pending budget approval. Budget pending vibes.",
+  ],
+  review: [ // you missed; it's lying on the floor somewhere
+    "Your application is under review. (Forever.)",
+    "Application received! Expect a reply in 6–8 business eternities.",
+    "Status: In Review. Last updated: never.",
+    "Our system couldn't parse your resume. It just saw a crumpled ball.",
+    "Thanks for your interest! Now re-type your entire resume into this form.",
+    "We noticed a gap in your trajectory. Can you explain it?",
+    "Not quite. Have you tried being more of a culture fit?",
+    "Your resume was reviewed by our AI screener. It's still laughing.",
+    "Bold of you to assume anyone was watching.",
+    "Application status: Seen. That's all you get.",
+  ],
+  archived: [ // missed the hoop but somehow ended up in the bin anyway
+    "Missed the hoop, found the bin. HR calls that 'efficient routing'.",
+    "Skipped the interview and went straight to the archive. Impressive.",
+  ],
+  bank: [
+    "Networking bonus! You know a guy who knows a guy. Still rejected.",
+    "Banked it off a connection. They endorsed you for 'Microsoft Word'.",
+    "Leveraged your network! They replied: 'Sorry, who is this?'",
+  ],
+  ghost: [
+    "Ghosted. The hoop has stopped responding to your messages.",
+    "The hoop left you on read.",
+    "The recruiter went silent mid-process. Classic.",
+  ],
+  requirements: [
+    "Requirements updated: 10+ years experience for entry level.",
+    "Requirements updated: fluent in 4 languages, including one we made up.",
+    "Requirements updated: PhD preferred. Compensation: exposure.",
+    "Requirements updated: 5 years experience with a tool released last Tuesday.",
+    "Requirements updated: self-starter who never starts anything without approval.",
+    "Role update: now hybrid (5 days in office).",
+  ],
+  referral: [
+    "🤝 Referral! Your cousin's roommate vouched for you. Bigger rim, this shot only.",
+    "🤝 Referral! Someone actually remembered you. Bigger rim, this shot only.",
+  ],
+  senders: ["Talent Acquisition Team", "no-reply@careers", "Your Future Ex-Employer", "Recruiting Bot 3000", "HR (Automated)"],
+};
+
+const RANKS = [ // by final score (max possible = 100)
+  { max: 0,   title: "Open to Work",                         note: "Your banner is green. Your inbox is empty." },
+  { max: 6,   title: "Unpaid Intern",                        note: "Reports to: the other unpaid intern." },
+  { max: 14,  title: "Junior Associate (Contract-to-Maybe)", note: "Contract renews never, pending a review that won't happen." },
+  { max: 24,  title: "Senior Rejection Specialist",          note: "You've been rejected so well, we want you to teach it." },
+  { max: 36,  title: "Head of Synergy (Probationary)",       note: "Probation lasts until you stop asking about the raise." },
+  { max: 50,  title: "Chief Vibes Officer",                  note: "Equity: 0.0001% of a company worth $0." },
+  { max: 999, title: "Overqualified (Please Don't Apply)",   note: "Your skills intimidate our middle management." },
+];
+
+/* =====================================================================
+   HELPERS
+   ===================================================================== */
+const rand  = (a, b) => a + Math.random() * (b - a);
+const pick  = arr => arr[Math.floor(Math.random() * arr.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const $ = id => document.getElementById(id);
+const lastPicked = new Map();
+function pickFresh(arr) { // avoid repeating the previous message
+  let m, g = 0;
+  do { m = pick(arr); } while (arr.length > 1 && m === lastPicked.get(arr) && g++ < 10);
+  lastPicked.set(arr, m); return m;
+}
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath(); c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+function canvasTexture(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
+  return t;
+}
+
+/* =====================================================================
+   SOUND: synthesized with the Web Audio API
+   ===================================================================== */
+const Sound = {
+  ctx: null, master: null, noiseBuf: null, muted: false, last: {},
+  init() {
+    if (this.ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    this.ctx = new AC();
+    this.master = this.ctx.createGain(); this.master.gain.value = 0.6; this.master.connect(this.ctx.destination);
+    const len = this.ctx.sampleRate;
+    this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = this.noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  },
+  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); },
+  ok(key, gap = 0.05) {
+    if (!this.ctx || this.muted) return false;
+    const now = this.ctx.currentTime;
+    if (key && this.last[key] && now - this.last[key] < gap) return false;
+    if (key) this.last[key] = now;
+    return true;
+  },
+  noise(t0, dur, freq, q, gain, type = 'bandpass', freqEnd) {
+    const c = this.ctx, src = c.createBufferSource(); src.buffer = this.noiseBuf;
+    const f = c.createBiquadFilter(); f.type = type; f.Q.value = q; f.frequency.setValueAtTime(freq, t0);
+    if (freqEnd) f.frequency.exponentialRampToValueAtTime(freqEnd, t0 + dur);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + Math.min(0.01, dur / 4));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(f); f.connect(g); g.connect(this.master);
+    src.start(t0, Math.random() * 0.5, dur + 0.05);
+  },
+  tone(t0, dur, freq, gain, type = 'sine', freqEnd) {
+    const c = this.ctx, o = c.createOscillator(); o.type = type;
+    o.frequency.setValueAtTime(freq, t0);
+    if (freqEnd) o.frequency.exponentialRampToValueAtTime(freqEnd, t0 + dur);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(this.master); o.start(t0); o.stop(t0 + dur + 0.05);
+  },
+  crumple() {
+    if (!this.ok('crumple', 0.15)) return;
+    const t = this.ctx.currentTime;
+    for (let i = 0; i < 10; i++) this.noise(t + i * 0.022 + Math.random() * 0.02, rand(0.02, 0.06), rand(1500, 5000), 1.4, rand(0.15, 0.35));
+  },
+  clank(s = 1) {
+    if (!this.ok('clank', 0.06)) return;
+    const t = this.ctx.currentTime; s = clamp(s, 0.2, 1);
+    [523, 1347, 2213, 3170].forEach((f, i) => this.tone(t, 0.5 - i * 0.08, f * rand(0.98, 1.02), 0.22 * s / (i + 1)));
+    this.noise(t, 0.04, 3000, 1, 0.3 * s);
+  },
+  board(s = 1) {
+    if (!this.ok('board', 0.08)) return;
+    const t = this.ctx.currentTime; s = clamp(s, 0.2, 1);
+    this.tone(t, 0.18, 210, 0.35 * s, 'triangle', 120);
+    this.noise(t, 0.08, 900, 0.8, 0.25 * s, 'lowpass');
+  },
+  swish() {
+    if (!this.ok('swish', 0.3)) return;
+    const t = this.ctx.currentTime;
+    this.noise(t, 0.38, 5000, 0.9, 0.35, 'bandpass', 1200);
+    this.noise(t + 0.05, 0.25, 3000, 0.7, 0.15, 'highpass');
+  },
+  thud() {
+    if (!this.ok('thud', 0.2)) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, 0.32, 150, 0.7, 'sine', 45);
+    this.noise(t, 0.14, 420, 0.7, 0.4, 'lowpass');
+    this.tone(t + 0.01, 0.25, 310, 0.08, 'square', 290);
+    this.tone(t + 0.03, 0.3, 790, 0.06);
+  },
+  floor(s = 1) {
+    if (!this.ok('floor', 0.1)) return;
+    this.noise(this.ctx.currentTime, 0.07, 700, 0.6, 0.3 * clamp(s, 0.15, 1), 'lowpass');
+  },
+  ding() {
+    if (!this.ok('ding', 0.2)) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, 0.18, 880, 0.15, 'triangle'); this.tone(t + 0.09, 0.25, 1320, 0.15, 'triangle');
+  },
+  sad() {
+    if (!this.ok('sad', 0.5)) return;
+    this.tone(this.ctx.currentTime, 0.5, 420, 0.12, 'triangle', 210);
+  },
+};
+
+
+/* =====================================================================
+   RENDERER, CAMERA, LIGHTS: soft studio lighting, not too bright
+   ===================================================================== */
+const glCanvas = $('gl'), fxCanvas = $('fx'), fx2d = fxCanvas.getContext('2d');
+const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, antialias: true, alpha: true });
+renderer.setClearColor(0x000000, 0);           // CSS gradient shows through
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.LinearToneMapping;
+renderer.toneMappingExposure = CFG.exposure;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.physicallyCorrectLights = false;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(56, 1, 0.05, 100);
+camera.position.copy(CAM_POS); camera.lookAt(CAM_LOOK);
+
+// A tiny procedural "studio" for soft reflections on the glossy clay materials
+{
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const studio = new THREE.Scene();
+  studio.background = new THREE.Color(0x9a9aa2);
+  const panel = (w, h, x, y, z, c) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
+    m.position.set(x, y, z); m.lookAt(0, 0, 0); studio.add(m);
+  };
+  panel(8, 4, 0, 6, 0, 0xffffff);     // big soft key from above
+  panel(4, 6, -6, 2, -2, 0xdfe6ff);   // cool side fill
+  panel(4, 6, 6, 2, 3, 0xfff1e0);     // warm side fill
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshBasicMaterial({ color: 0x6f6f76, side: THREE.DoubleSide }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -3; studio.add(ground);
+  scene.environment = pmrem.fromScene(studio, 0.04).texture;
+}
+
+scene.add(new THREE.HemisphereLight(0xf2f3ff, 0x9c988f, 0.42));
+const key = new THREE.DirectionalLight(0xfff4e8, 0.62);
+key.position.set(2.5, 9, 0.5); key.target.position.set(0, 0, 4);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left: -5, right: 5, top: 8, bottom: -4, near: 1, far: 20 });
+key.shadow.radius = 6; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.02;
+scene.add(key, key.target);
+
+// Floor that only shows soft shadows, so the backdrop stays clean
+const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ opacity: 0.16 }));
+floorMesh.rotation.x = -Math.PI / 2; floorMesh.position.z = 4; floorMesh.receiveShadow = true;
+scene.add(floorMesh);
+
+/* =====================================================================
+   MATERIALS: glossy "3D icon" clay look
+   ===================================================================== */
+function clay(color, opts = {}) {
+  return new THREE.MeshPhysicalMaterial(Object.assign({
+    color, roughness: 0.45, metalness: 0, clearcoat: 0.45, clearcoatRoughness: 0.4, envMapIntensity: 0.35,
+  }, opts));
+}
+function roundedRectShape(w, h, r) {
+  const s = new THREE.Shape(), x = -w / 2, y = -h / 2;
+  s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + h - r); s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r);
+  s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y);
+  return s;
+}
+/* Pillowy extrusion: a rounded rectangle with soft bevels */
+function softSlab(w, h, depth, r, bevel) {
+  const g = new THREE.ExtrudeGeometry(roundedRectShape(w - bevel * 2, h - bevel * 2, Math.max(0.001, r - bevel)), {
+    depth: Math.max(0.001, depth - bevel * 2), bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 6, curveSegments: 10,
+  });
+  g.center();
+  return g;
+}
+
+/* =====================================================================
+   TEXTURES (drawn in code)
+   ===================================================================== */
+const paperTex = canvasTexture(256, 256, (c, w, h) => {
+  c.fillStyle = '#f4efe4'; c.fillRect(0, 0, w, h);
+  for (let r = 0; r < 3; r++) {
+    const oy = r * 86;
+    c.fillStyle = 'rgba(10,132,255,.35)'; c.fillRect(20, oy + 14, 100, 5);
+    c.fillStyle = 'rgba(55,65,85,.16)';
+    for (let i = 0; i < 6; i++) c.fillRect(20, oy + 30 + i * 9, rand(100, 200), 2);
+  }
+  c.strokeStyle = 'rgba(120,108,80,.12)'; c.lineWidth = 1.5;
+  for (let i = 0; i < 12; i++) { c.beginPath(); c.moveTo(rand(0, w), rand(0, h)); c.lineTo(rand(0, w), rand(0, h)); c.stroke(); }
+});
+const stickerFace = canvasTexture(128, 128, (c, w) => {
+  c.clearRect(0, 0, w, w);
+  c.fillStyle = '#fff'; c.font = '800 50px "Helvetica Neue", Helvetica, Arial, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText('net', w / 2, w / 2 + 3);      // generic stand-in, deliberately not a real logo
+});
+// Sticker on the bin: the game's own generic "net" badge, a bit crooked (not any real logo)
+const canBadgeTex = canvasTexture(256, 196, (c, w, h) => {
+  c.clearRect(0, 0, w, h);
+  c.save(); c.translate(w / 2, h / 2); c.rotate(-0.16);
+  const z = 132, r = 30;
+  c.shadowColor = 'rgba(0,0,0,.25)'; c.shadowBlur = 8; c.shadowOffsetY = 3;
+  c.fillStyle = '#fff'; roundRect(c, -z / 2 - 9, -z / 2 - 9, z + 18, z + 18, r + 8); c.fill();   // die-cut border
+  c.shadowColor = 'transparent';
+  const g = c.createLinearGradient(0, -z / 2, 0, z / 2);
+  g.addColorStop(0, '#2a86ff'); g.addColorStop(1, '#0a66e0');
+  c.fillStyle = g; roundRect(c, -z / 2, -z / 2, z, z, r); c.fill();
+  c.fillStyle = 'rgba(255,255,255,.18)'; roundRect(c, -z / 2 + 6, -z / 2 + 6, z - 12, z * 0.4, r - 6); c.fill(); // gloss
+  c.fillStyle = '#fff'; c.font = '800 58px "Helvetica Neue", Helvetica, Arial, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText('net', 0, 4);
+  // peeling corner
+  c.fillStyle = '#e6e9ee';
+  c.beginPath(); c.moveTo(z / 2 + 9, -z / 2 + 22); c.lineTo(z / 2 - 14, -z / 2 - 9); c.lineTo(z / 2 - 6, -z / 2 + 12); c.closePath(); c.fill();
+  c.restore();
+});
+
+/* =====================================================================
+   HOOP: chunky rounded backboard, glossy rim, rope net
+   ===================================================================== */
+const hoop = new THREE.Group(); scene.add(hoop);
+const hoopMats = [];
+function hoopMat(m) { m.userData.base = m.opacity; hoopMats.push(m); return m; }
+
+const bcy = (BOARD.y0 + BOARD.y1) / 2, bh = BOARD.y1 - BOARD.y0;
+// Smoked black glass: dark tint, fine grain, a soft sheen, translucent
+const frostTex = canvasTexture(512, 300, (c, w, h) => {
+  const g = c.createLinearGradient(0, 0, w, h);
+  g.addColorStop(0, '#26282c'); g.addColorStop(0.5, '#121315'); g.addColorStop(1, '#08090a');
+  c.fillStyle = g; c.fillRect(0, 0, w, h);
+  for (let i = 0; i < 9000; i++) {                       // frost grain
+    c.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.12)';
+    c.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+  }
+  const sheen = c.createLinearGradient(0, 0, w * 0.6, h);  // diagonal glare band
+  sheen.addColorStop(0, 'rgba(255,255,255,0)'); sheen.addColorStop(0.45, 'rgba(255,255,255,.16)');
+  sheen.addColorStop(0.55, 'rgba(255,255,255,0)'); c.fillStyle = sheen; c.fillRect(0, 0, w, h);
+});
+const boardGeo = softSlab(BOARD.w, bh, BOARD.t, 0.16, 0.04);
+{ // planar UVs on the front so the frost texture maps across the whole face
+  const pos = boardGeo.attributes.position, uv = boardGeo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / BOARD.w + 0.5, pos.getY(i) / bh + 0.5);
+}
+const board = new THREE.Mesh(boardGeo, hoopMat(new THREE.MeshPhysicalMaterial({
+  color: 0xffffff, map: frostTex, roughness: 0.4, metalness: 0, transparent: true, opacity: 0.78, depthWrite: false,
+  clearcoat: 1, clearcoatRoughness: 0.15, envMapIntensity: 0.8,
+})));
+board.renderOrder = 2;
+// Slightly darker rounded edge so the glass reads as a solid object
+{
+  const edge = roundedRectShape(BOARD.w + 0.01, bh + 0.01, 0.165);
+  edge.holes.push(roundedRectShape(BOARD.w - 0.07, bh - 0.07, 0.13));
+  const edgeMesh = new THREE.Mesh(new THREE.ExtrudeGeometry(edge, { depth: BOARD.t - 0.02, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 4, curveSegments: 12 }),
+    hoopMat(new THREE.MeshPhysicalMaterial({ color: 0x0c0d0f, roughness: 0.3, transparent: true, opacity: 0.92, clearcoat: 1, clearcoatRoughness: 0.15 })));
+  edgeMesh.position.set(0, bcy, BOARD.z + 0.01);
+  edgeMesh.renderOrder = 3;
+  hoop.add(edgeMesh);
+}
+board.position.set(0, bcy, BOARD.z + BOARD.t / 2);
+board.castShadow = false; board.receiveShadow = false;
+hoop.add(board);
+
+// Coral shooter's square, raised like an inlay
+const sqShape = roundedRectShape(0.6, 0.46, 0.08);
+sqShape.holes.push(roundedRectShape(0.48, 0.34, 0.04));
+const sqGeo = new THREE.ExtrudeGeometry(sqShape, { depth: 0.008, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.008, bevelSegments: 3, curveSegments: 8 });
+const square = new THREE.Mesh(sqGeo, hoopMat(clay(0xff6a33)));
+square.position.set(0, RIM_Y + 0.27, BOARD.z - 0.012);
+hoop.add(square);
+
+// Board lettering (plain text, top of the glass)
+const boardLabelTex = canvasTexture(1024, 160, (c, w, h) => {
+  c.clearRect(0, 0, w, h);
+  c.font = '700 106px "Helvetica Neue", Helvetica, Arial, sans-serif';
+  c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+  // extra-heavy letters: a same-colour outline thickens every stroke, a soft shadow lifts it off the glass
+  c.shadowColor = 'rgba(0,0,0,.45)'; c.shadowBlur = 8; c.shadowOffsetY = 2;
+  c.strokeStyle = '#ffffff'; c.lineWidth = 4;
+  c.strokeText('LinkedIn Jobs Tab', w / 2, h / 2 + 4);
+  c.shadowColor = 'transparent';
+  c.fillStyle = '#ffffff';
+  c.fillText('LinkedIn Jobs Tab', w / 2, h / 2 + 4);
+});
+const boardLabel = new THREE.Mesh(new THREE.PlaneGeometry(1.36, 0.2125),
+  hoopMat(new THREE.MeshBasicMaterial({ map: boardLabelTex, transparent: true, opacity: 0.999, depthWrite: false })));
+boardLabel.rotation.y = Math.PI;                  // face the player
+boardLabel.position.set(0, BOARD.y1 - 0.16, BOARD.z - 0.008);
+boardLabel.renderOrder = 4;
+hoop.add(boardLabel);
+
+// Stickers: little glossy blue tiles, slapped on crooked
+const stickerGroup = new THREE.Group(); hoop.add(stickerGroup);
+const stickerMat = hoopMat(clay(0x1f6fff, { roughness: 0.35, clearcoat: 0.6 }));
+const stickerFaceMat = hoopMat(new THREE.MeshBasicMaterial({ map: stickerFace, transparent: true, opacity: 0.999, depthWrite: false }));
+const stickerGeo = softSlab(1, 1, 0.12, 0.26, 0.05); // unit size, scaled per sticker
+function makeStickers() {
+  stickerGroup.clear();
+  const n = Math.round(rand(CFG.stickerCount[0], CFG.stickerCount[1]));
+  const placed = [];
+  let tries = 0;
+  while (placed.length < n && tries++ < 500) {
+    const s = { x: rand(-0.75, 0.75), y: rand(BOARD.y0 + 0.1, BOARD.y1 - 0.1), size: rand(0.11, 0.14) };
+    if (Math.abs(s.x) < 0.36 && s.y < RIM_Y + 0.55) continue;     // keep the square + rim clear
+    if (Math.abs(s.x) < 0.78 && s.y > BOARD.y1 - 0.3) continue;   // keep the lettering clear
+    if (placed.every(o => Math.hypot(o.x - s.x, o.y - s.y) > 0.17)) placed.push(s);
+  }
+  placed.forEach(s => {
+    const g = new THREE.Group();
+    const tile = new THREE.Mesh(stickerGeo, stickerMat);
+    tile.scale.set(s.size, s.size, s.size);
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(s.size * 0.9, s.size * 0.9), stickerFaceMat);
+    face.rotation.y = Math.PI; face.position.z = -s.size * 0.085;
+    g.add(tile, face);
+    g.position.set(s.x, s.y, BOARD.z - 0.012);
+    g.rotation.z = rand(-0.45, 0.45);
+    stickerGroup.add(g);
+  });
+}
+
+// Rim + bracket
+const rimMat = hoopMat(clay(0xff5a1f, { roughness: 0.32, clearcoat: 0.7 }));
+const rim = new THREE.Mesh(new THREE.TorusGeometry(CFG.rimR, CFG.rimTube, 20, 64), rimMat);
+rim.rotation.x = Math.PI / 2; rim.castShadow = true;
+hoop.add(rim);
+const bracketMat = hoopMat(clay(0xff6b2c, { roughness: 0.32 }));
+const bracket = new THREE.Mesh(softSlab(0.16, 0.07, 0.14, 0.03, 0.02), bracketMat);
+hoop.add(bracket);
+
+// Net: thick soft cords (diagonals crossing = diamond mesh) + a bottom ring
+const NET = { strands: 12, depth: 0.42, cord: 0.009, bottom: 0.58 };
+const netGroup = new THREE.Group(); hoop.add(netGroup);
+const netMat = hoopMat(clay(0xffffff, { roughness: 0.7, clearcoat: 0.1 }));
+{
+  const R = CFG.rimR, rows = 5;
+  for (let dir = -1; dir <= 1; dir += 2) {
+    for (let i = 0; i < NET.strands; i++) {
+      const pts = [];
+      for (let k = 0; k <= rows; k++) {
+        const t = k / rows, a = (i / NET.strands) * Math.PI * 2 + dir * t * (Math.PI * 2 / NET.strands) * 2.5;
+        const r = lerp(R, R * NET.bottom, t) - (k > 0 && k < rows ? 0.004 : 0);
+        pts.push(new V3(Math.cos(a) * r, -t * NET.depth - Math.sin(t * Math.PI) * 0.01, Math.sin(a) * r));
+      }
+      const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, NET.cord, 6, false), netMat);
+      tube.castShadow = true;
+      netGroup.add(tube);
+    }
+  }
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(R * NET.bottom, NET.cord * 1.2, 8, 40), netMat);
+  ring.rotation.x = Math.PI / 2; ring.position.y = -NET.depth; netGroup.add(ring);
+}
+
+/* =====================================================================
+   TRASH CAN: chunky lathe-turned bin with a rounded lip and a lid
+   ===================================================================== */
+const can = new THREE.Group(); scene.add(can);
+// Brushed steel: fine streaks around the circumference
+const brushedTex = canvasTexture(64, 512, (c, w, h) => {
+  c.fillStyle = '#b9bdc3'; c.fillRect(0, 0, w, h);
+  for (let y = 0; y < h; y++) {
+    const v = rand(-18, 18) | 0;
+    c.fillStyle = `rgba(${v > 0 ? '255,255,255' : '40,44,50'},${Math.abs(v) / 160})`;
+    c.fillRect(0, y, w, 1);
+  }
+});
+const steel = (opts = {}) => new THREE.MeshPhysicalMaterial(Object.assign({
+  color: 0xffffff, map: brushedTex, metalness: 0.82, roughness: 0.32, envMapIntensity: 1.25, clearcoat: 0.25, clearcoatRoughness: 0.4,
+}, opts));
+const canMat = steel();
+{
+  const { h, rTop, rBot, lip } = CAN, p = [];
+  p.push(new THREE.Vector2(0.001, 0));
+  // outer wall with a soft rounded base
+  for (let i = 0; i <= 6; i++) { const a = -Math.PI / 2 + (i / 6) * Math.PI / 2; p.push(new THREE.Vector2(rBot - 0.05 + Math.cos(a) * 0.05, 0.05 + Math.sin(a) * 0.05)); }
+  for (let i = 1; i <= 10; i++) { const t = i / 10; p.push(new THREE.Vector2(lerp(rBot, rTop, t), lerp(0.05, h - lip, t))); }
+  // fat rounded lip rolling outward then back in
+  for (let i = 0; i <= 12; i++) { const a = -Math.PI / 2 + (i / 12) * Math.PI * 1.5; p.push(new THREE.Vector2(rTop + Math.cos(a) * lip * 0.9, h - lip * 0.1 + Math.sin(a) * lip)); }
+  // inner wall back down
+  p.push(new THREE.Vector2(rTop - lip * 0.9, h - lip * 0.3));
+  p.push(new THREE.Vector2(rBot - 0.035, 0.06));
+  p.push(new THREE.Vector2(0.001, 0.06));
+  const geo = new THREE.LatheGeometry(p, 72);
+  const body = new THREE.Mesh(geo, canMat);
+  body.castShadow = true; body.receiveShadow = true;
+  can.add(body);
+  // darker inside floor so the opening reads as deep
+  const inside = new THREE.Mesh(new THREE.CircleGeometry(rBot - 0.035, 40), new THREE.MeshStandardMaterial({ color: 0x3f4349, roughness: 0.9 }));
+  inside.rotation.x = -Math.PI / 2; inside.position.y = 0.065; can.add(inside);
+  // two soft horizontal ribs
+  [0.22, 0.52].forEach(v => {
+    const rr = lerp(rBot, rTop, (v * h - 0.05) / (h - lip - 0.05));
+    const rib = new THREE.Mesh(new THREE.TorusGeometry(rr + 0.004, 0.012, 10, 64), canMat);
+    rib.rotation.x = Math.PI / 2; rib.position.y = v * h; can.add(rib);
+  });
+  // front badge (curved to sit on the wall)
+  const y0 = 0.24 * h, y1 = 0.66 * h;
+  const r0 = lerp(rBot, rTop, (y0 - 0.05) / (h - lip - 0.05)) + 0.006, r1 = lerp(rBot, rTop, (y1 - 0.05) / (h - lip - 0.05)) + 0.006;
+  const badge = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, y1 - y0, 32, 1, true, Math.PI - 0.55, 1.1),
+    new THREE.MeshPhysicalMaterial({ map: canBadgeTex, transparent: true, roughness: 0.35, clearcoat: 0.6, alphaTest: 0.02 }));
+  badge.position.y = (y0 + y1) / 2; can.add(badge);
+}
+// Lid hinged at the back edge, standing open; bounces when something lands
+const lidHinge = new THREE.Group();
+lidHinge.position.set(0, CAN.h + 0.01, CAN.rTop + 0.02);
+can.add(lidHinge);
+{
+  const R = CAN.rTop + CAN.lip, p = [];
+  for (let i = 0; i <= 16; i++) { const a = (i / 16) * Math.PI / 2; p.push(new THREE.Vector2(Math.cos(a) * R + 0.0001, Math.sin(a) * R * 0.32)); }
+  p.reverse();
+  const dome = new THREE.Mesh(new THREE.LatheGeometry(p, 64), steel({ side: THREE.DoubleSide, roughness: 0.28 }));
+  dome.position.z = -R; dome.castShadow = true;
+  const lipRing = new THREE.Mesh(new THREE.TorusGeometry(R, 0.018, 10, 64), steel());
+  lipRing.rotation.x = Math.PI / 2; lipRing.position.z = -R;
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 24, 16), new THREE.MeshPhysicalMaterial({ color: 0x4b5058, metalness: 0.6, roughness: 0.35, clearcoat: 0.6 }));
+  knob.scale.y = 0.7; knob.position.set(0, R * 0.32 + 0.02, -R);
+  lidHinge.add(dome, lipRing, knob);
+}
+
+/* =====================================================================
+   PAPER BALLS
+   ===================================================================== */
+const paperMat = new THREE.MeshStandardMaterial({ map: paperTex, roughness: 0.9, flatShading: true, envMapIntensity: 0.6 });
+function makeBallMesh() {
+  const geo = new THREE.IcosahedronGeometry(CFG.ballR, 2);
+  const p = geo.attributes.position, dirs = [];
+  for (let k = 0; k < 6; k++) dirs.push({ d: new V3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), f: rand(8, 22), ph: rand(0, 6), a: rand(0.05, 0.1) });
+  const v = new V3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const n = v.clone().normalize();
+    let s = 1;
+    dirs.forEach(o => { s += o.a * Math.sin(n.dot(o.d) * o.f + o.ph); }); // position-based, so shared verts stay welded
+    v.copy(n).multiplyScalar(CFG.ballR * s);
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, paperMat);
+  m.castShadow = true;
+  m.rotation.set(rand(0, 6), rand(0, 6), rand(0, 6));
+  return m;
+}
+
+/* ---------- Intro: a proper cover letter that crumples into the first ball ---------- */
+function wrapText(c, text, x, y, maxW, lh) {
+  const words = text.split(' '); let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (c.measureText(test).width > maxW && line) { c.fillText(line, x, y); y += lh; line = w; } else line = test;
+  }
+  if (line) c.fillText(line, x, y);
+  return y + lh;
+}
+const letterTex = canvasTexture(620, 874, (c, w, h) => {
+  const F = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+  c.fillStyle = '#fbfaf6'; c.fillRect(0, 0, w, h);
+  const L = 56, R = w - 56, W = R - L;
+  c.fillStyle = '#1d1d1f'; c.font = `700 30px ${F}`; c.fillText('WHATEVER YOUR NAME IS', L, 84);
+  c.fillStyle = '#6e6e73'; c.font = `400 13px ${F}`;
+  c.fillText('whatever.your.name@email.com  ·  +1 (555) 010-2026  ·  Open to Work', L, 108);
+  c.fillStyle = '#0a84ff'; c.fillRect(L, 124, W, 3);
+  c.fillStyle = '#3a3a3c'; c.font = `400 13.5px ${F}`;
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  c.fillText(today, L, 162);
+  ['Hiring Manager', 'Synergix Global Holdings', '1 Corporate Way, Suite 404'].forEach((t, i) => c.fillText(t, L, 194 + i * 19));
+  c.fillStyle = '#1d1d1f'; c.font = `700 14px ${F}`;
+  let y = wrapText(c, 'Re: Application for Junior Associate (Entry Level, 10+ years experience required)', L, 274, W, 20);
+  c.font = `400 14px ${F}`; c.fillStyle = '#2c2c2e';
+  y = wrapText(c, 'Dear Hiring Manager,', L, y + 14, W, 20);
+  const paras = [
+    'I am writing to express my sincere enthusiasm for the Junior Associate role at Synergix Global Holdings. With a proven track record of refreshing my inbox and a deep passion for whatever it is your company does, I am confident I would be a strong culture fit.',
+    'In my previous roles I have synergized deliverables, circled back on action items, and taken several things offline. I am a self-starter who thrives in fast-paced, ambiguous, and occasionally on-fire environments.',
+    'I would welcome the opportunity to discuss how my skills align with your needs, or to complete an unpaid twelve-hour take-home assignment. Thank you for your time and consideration.',
+  ];
+  paras.forEach(pp => { y = wrapText(c, pp, L, y + 12, W, 20); });
+  y = wrapText(c, 'Sincerely,', L, y + 18, W, 20);
+  c.fillStyle = '#0b3d91'; c.font = `italic 300 30px ${F}`; c.fillText('Whatever Your Name Is', L, y + 22);
+  c.fillStyle = '#c7c7cc'; c.font = `400 11px ${F}`; c.fillText('Enclosure: Resume_FINAL_v7.pdf', L, h - 40);
+});
+const letterMat = new THREE.MeshStandardMaterial({ map: letterTex, roughness: 0.85, side: THREE.DoubleSide, flatShading: true, envMapIntensity: 0.5 });
+const letterBallMat = new THREE.MeshStandardMaterial({ map: letterTex, roughness: 0.9, flatShading: true, envMapIntensity: 0.5 });
+const INTRO = { tIn: 0.45, tHold: 1.35, tCrumple: 2.55, tEnd: 2.8 };
+let intro = null;
+
+function startIntro() {
+  if (ball.mesh && !debris.includes(ball.mesh)) scene.remove(ball.mesh);
+  const geo = new THREE.PlaneGeometry(0.44, 0.62, 26, 36);
+  const pos = geo.attributes.position, n = pos.count;
+  const flat = Float32Array.from(pos.array), target = new Float32Array(n * 3);
+  // Where each point of the page ends up on the ball: page centre faces you, edges wrap round the back
+  const dirs = [];
+  for (let k = 0; k < 6; k++) dirs.push({ d: new V3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize(), f: rand(8, 22), ph: rand(0, 6), a: rand(0.05, 0.1) });
+  const maxR = Math.hypot(0.22, 0.31), v = new V3();
+  for (let i = 0; i < n; i++) {
+    const x = flat[i * 3], y = flat[i * 3 + 1];
+    const th = Math.atan2(y, x), ph = Math.min(Math.PI * 0.97, (Math.hypot(x, y) / maxR) * Math.PI);
+    v.set(Math.sin(ph) * Math.cos(th), Math.sin(ph) * Math.sin(th), Math.cos(ph));
+    let sc = 1; dirs.forEach(o => { sc += o.a * Math.sin(v.dot(o.d) * o.f + o.ph); });
+    const R = CFG.ballR * 0.82;                   // ends just inside the finished ball
+    target[i * 3] = v.x * R * sc; target[i * 3 + 1] = v.y * R * sc; target[i * 3 + 2] = v.z * R * sc;
+  }
+  const mesh = new THREE.Mesh(geo, letterMat);
+  mesh.castShadow = true;
+  scene.add(mesh);
+  ball.mesh = mesh;
+  ball.v.set(0, 0, 0); ball.w.set(0, 0, 0);
+  Object.assign(ball, { scored: false, touchedBoard: false, onFloor: false, flightT: 0, stillT: 0, spawnT: 1, sinkT: 0, inCan: false });
+  const from = new V3(0, CAM_POS.y + 0.02, CAM_POS.z + 0.95);  // held up close so you can read it
+  const q0 = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(CAM_POS, from, new V3(0, 1, 0)));
+  // The finished ball (same letter printed on it) grows around the crumpling page at the end
+  const finalBall = makeBallMesh();
+  finalBall.material = letterBallMat;
+  finalBall.visible = false;
+  scene.add(finalBall);
+  intro = { t: 0, geo, flat, target, from, q0, finalBall, sheet: mesh, axis: new V3(rand(-1, 1), rand(-1, 1), 0.3).normalize(), nextSound: INTRO.tHold };
+  ball.p.copy(from);
+  S.phase = 'intro';
+  showIsland('Polishing your cover letter…', '', '✎', 0);
+}
+
+function stepIntro(dt) {
+  const it = intro; it.t += dt;
+  const t = it.t, pos = it.geo.attributes.position.array;
+  const ease = k => k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+  const kIn = clamp(t / INTRO.tIn, 0, 1);
+  const e = ease(clamp((t - INTRO.tHold) / (INTRO.tCrumple - INTRO.tHold), 0, 1));
+  const wob = Math.sin(Math.PI * e);
+  for (let i = 0; i < pos.length; i += 3) {
+    const x = it.flat[i], y = it.flat[i + 1];
+    // gentle page curl while held, then crisp wrinkles that peak mid-crumple
+    const cup = Math.min(1, e * 2.2);                     // edges fold back first, like a hand closing
+    const curl = (1 - e) * 0.008 * Math.sin(y * 7 + t * 2.2) + (1 - e) * 0.025 * x * x - cup * 1.6 * (x * x + y * y) * (1 - e);
+    const wr = wob * 0.022 * (Math.sin(x * 23 + y * 17) + 0.6 * Math.sin(-x * 31 + y * 41 + 1.3) + 0.4 * Math.sin(x * 57 - y * 13));
+    const ee = e * e * (3 - 2 * e);
+    pos[i]     = lerp(x * (1 - 0.25 * cup), it.target[i], ee);
+    pos[i + 1] = lerp(y * (1 - 0.25 * cup), it.target[i + 1], ee);
+    pos[i + 2] = lerp(curl, it.target[i + 2], ee) + wr * (1 - ee);
+  }
+  it.geo.attributes.position.needsUpdate = true;
+  it.geo.computeVertexNormals();
+
+  // slide in, hold, then shrink down to the throwing spot while tumbling
+  const s = 0.6 + 0.4 * (1 - Math.pow(1 - kIn, 3));
+  ball.mesh.scale.setScalar(s);
+  ball.p.copy(it.from).lerp(BALL_REST, e);
+  ball.p.y += (1 - e) * 0.01 * Math.sin(t * 2);
+  ball.mesh.quaternion.copy(it.q0).multiply(new THREE.Quaternion().setFromAxisAngle(it.axis, e * e * 3.2));
+
+  // last stretch: the tidy paper ball closes around the page
+  const k = clamp((e - 0.78) / 0.22, 0, 1);
+  it.finalBall.visible = k > 0;
+  it.finalBall.position.copy(ball.p);
+  it.finalBall.quaternion.copy(ball.mesh.quaternion);
+  it.finalBall.scale.setScalar(lerp(0.55, 1, 1 - Math.pow(1 - k, 2)));
+
+  if (t >= it.nextSound && t < INTRO.tCrumple) { Sound.crumple(); it.nextSound += 0.3; }
+  if (t >= INTRO.tEnd) {
+    scene.remove(it.sheet); it.geo.dispose();
+    ball.mesh = it.finalBall;
+    ball.mesh.scale.setScalar(1);
+    ball.p.copy(BALL_REST);
+    intro = null; hideIsland();
+    S.phase = 'ready';
+  }
+}
+
+// Aim preview: a tapered dotted arc, plus a target ring where the ball crosses rim height
+const DOTS = 40;
+const dots = [];
+for (let i = 0; i < DOTS; i++) {
+  const d = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0x0a84ff, transparent: true, opacity: 0.8, depthWrite: false }));
+  d.visible = false; d.renderOrder = 5; scene.add(d); dots.push(d);
+}
+const ringGeo = new THREE.TorusGeometry(1, 0.09, 10, 48);
+const aimRing = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x30d158, transparent: true, opacity: 0.95, depthTest: false }));
+aimRing.rotation.x = Math.PI / 2; aimRing.renderOrder = 10; aimRing.visible = false; scene.add(aimRing);
+const aimDisc = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({ color: 0x30d158, transparent: true, opacity: 0.18, depthTest: false, side: THREE.DoubleSide }));
+aimDisc.rotation.x = -Math.PI / 2; aimDisc.renderOrder = 9; aimDisc.visible = false; scene.add(aimDisc);
+const floorMark = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x8e8e93, transparent: true, opacity: 0.7, depthWrite: false }));
+floorMark.rotation.x = Math.PI / 2; floorMark.visible = false; scene.add(floorMark);
+const AIM_COLORS = { good: 0x30d158, close: 0xff9f0a, off: 0xff453a, short: 0x8e8e93 };
+let aimQuality = 'short';
+let previewPts = [];     // world points of the arc, drawn as an even dotted line in the overlay
+
+/* =====================================================================
+   GAME STATE
+   ===================================================================== */
+let S = null;
+const ball = { mesh: null, p: new V3(), v: new V3(), w: new V3() };
+let debris = [];                        // missed resumes left lying on the floor
+const fx = { net: { x: 0, z: 0, vx: 0, vz: 0, s: 0, vs: 0 }, lid: { a: 0, v: 0 }, shake: 0, rimWob: 0 };
+let time = 0, aim = null;
+
+function newGame() {
+  S = {
+    phase: 'ready', score: 0, made: 0, thrown: 0, streak: 0, bestStreak: 0, banks: 0,
+    rimR: CFG.rimR, rimCur: CFG.rimR, referral: false,
+    ghostPlanned: false, ghostActive: false, ghostHappened: false, hoopAlpha: 1,
+    hoopX: 0, hoopZ: 0, hoopXCur: 0, hoopZCur: 0,
+  };
+  debris.forEach(m => scene.remove(m)); debris = [];
+  Chat.clear();
+  makeStickers();
+  startIntro();          // first throw: watch the cover letter get crumpled
+  updateHUD();
+}
+
+/* Positions of everything that moves with the hoop, in world space */
+function geom() {
+  const ox = S.hoopXCur, oz = S.hoopZCur, r = S.rimCur;
+  return {
+    ox, bz: BOARD.z + oz, rimR: r,
+    rimC: new V3(ox, RIM_Y, BOARD.z + oz - 0.15 - r),
+    canC: new V3(ox, 0, BOARD.z + oz - 0.15 - CFG.rimR),
+  };
+}
+
+function newBall() {
+  if (ball.mesh && !debris.includes(ball.mesh)) scene.remove(ball.mesh);
+  ball.mesh = makeBallMesh();
+  scene.add(ball.mesh);
+  ball.p.copy(BALL_REST); ball.v.set(0, 0, 0); ball.w.set(0, 0, 0);
+  Object.assign(ball, { scored: false, touchedBoard: false, onFloor: false, flightT: 0, stillT: 0, spawnT: 0, sinkT: 0, inCan: false });
+  ball.mesh.position.copy(ball.p);
+  ball.mesh.scale.setScalar(0.01);
+}
+
+/* =====================================================================
+   INPUT: pull down (toward you) to wind up, sideways to aim
+   ===================================================================== */
+function pullMax() { return clamp(window.innerHeight * 0.32, 120, 260); }
+glCanvas.addEventListener('pointerdown', e => {
+  if (!S || S.phase !== 'ready') return;
+  Sound.init(); Sound.resume();
+  aim = { sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY };
+  try { glCanvas.setPointerCapture(e.pointerId); } catch (_) {}
+  S.phase = 'aiming'; glCanvas.classList.add('aiming');
+  Sound.crumple();
+});
+glCanvas.addEventListener('pointermove', e => {
+  if (!aim || S.phase !== 'aiming') return;
+  aim.x = e.clientX; aim.y = e.clientY;
+});
+function endAim() {
+  if (!aim || S.phase !== 'aiming') return;
+  glCanvas.classList.remove('aiming');
+  const a = aimState(); aim = null;
+  hidePreview();
+  if (!a) { S.phase = 'ready'; ball.p.copy(BALL_REST); return; }
+  launch(a);
+}
+glCanvas.addEventListener('pointerup', endAim);
+glCanvas.addEventListener('pointercancel', endAim);
+
+function pullOf() {
+  const M = pullMax();
+  return { pull: clamp(aim.y - aim.sy, 0, M) / M, side: clamp((aim.x - aim.sx) / M, -1, 1) };
+}
+/* Drag → pulled-back ball position + launch velocity */
+function aimState() {
+  const { pull, side } = pullOf();
+  const pos = BALL_REST.clone().add(new V3(side * 0.05, -0.1 * pull, -0.06 * pull));
+  if (pull < 0.06) return null;   // too small a pull = cancel
+  const speed = lerp(CFG.minSpeed, CFG.maxSpeed, pull);
+  const a = CFG.launchAngle * Math.PI / 180;
+  return { pos, power: pull, vel: new V3(-side * CFG.aimSpread, speed * Math.sin(a), speed * Math.cos(a)) };
+}
+
+/* =====================================================================
+   THROW LIFECYCLE
+   ===================================================================== */
+function launch(a) {
+  ball.p.copy(a.pos); ball.v.copy(a.vel);
+  ball.w.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(6, 12));
+  ball.flightT = 0;
+  S.thrown++; S.phase = 'flying'; S.ghostHappened = false;
+  Sound.crumple(); updateHUD();
+  Chat.sendApplication(S.thrown);
+}
+
+function onScore() {
+  ball.scored = true;
+  Sound.swish();
+  fx.net.vx += ball.v.x * 0.6 + rand(-0.3, 0.3); fx.net.vz += ball.v.z * 0.4; fx.net.vs += 3;
+  const g = geom();
+  floater('+2', g.rimC.clone().add(new V3(0, 0.12, 0)), '#ff6b2c');
+  if (ball.touchedBoard) {
+    setTimeout(() => floater('+3 Networking Bonus', g.rimC.clone().add(new V3(0, 0.45, 0)), '#0a84ff', true), 180);
+    setTimeout(() => Sound.ding(), 120);
+  }
+}
+
+function enterCan() {
+  ball.inCan = true; S.phase = 'sinking'; ball.sinkT = 0;
+  Sound.thud();
+  fx.lid.v -= 6 + rand(0, 2);
+  fx.shake = 0.15;
+}
+
+function resolveThrow(outcome) {   // outcome: 'score' | 'miss' | 'archived'
+  if (S.phase === 'resolved' || S.phase === 'end') return;
+  S.phase = 'resolved';
+  S.ghostActive = false;
+
+  let reply, read;
+  if (outcome === 'score') {
+    let pts = 2;
+    if (ball.touchedBoard) { pts += 3; S.banks++; }
+    S.score += pts; S.made++; S.streak++;
+    S.bestStreak = Math.max(S.bestStreak, S.streak);
+    reply = ball.touchedBoard ? pickFresh(MSG.bank) : pickFresh(MSG.reject); read = true;
+    bump('st-score'); bump('st-made'); bump('st-streak');
+  } else {
+    S.streak = 0;
+    reply = outcome === 'archived' ? pickFresh(MSG.archived) : S.ghostHappened ? pickFresh(MSG.ghost) : pickFresh(MSG.review);
+    read = false;
+  }
+  // Ghosted = no reply at all, just "Delivered"
+  Chat.reply(S.ghostHappened && outcome !== 'score' ? null : reply, read, S.ghostHappened && outcome !== 'score');
+
+  // A miss stays where it landed; anything in the bin disappears into it
+  if (outcome === 'miss' && ball.onFloor && Math.abs(ball.p.x) < 7 && ball.p.z < 11) debris.push(ball.mesh);
+  else scene.remove(ball.mesh);
+  if (debris.length > 24) scene.remove(debris.shift());
+
+  bump('st-sent'); updateHUD();
+  if (S.referral) { S.referral = false; hideIsland(); }
+  if (S.thrown >= CFG.totalThrows) { setTimeout(endGame, 1900); return; }
+  setTimeout(prepareNextThrow, 1000);
+}
+
+function prepareNextThrow() {
+  if (!S || S.phase === 'end') return;
+  S.ghostPlanned = false;
+  if (S.thrown > 0 && S.thrown % 5 === 0) {
+    // Requirements update: shrink rim, move hoop, then both
+    const round = S.thrown / 5;
+    if (round % 2 === 1 || round >= 3) S.rimR = Math.max(CFG.rimMinR, S.rimR - CFG.rimShrink);
+    if (round % 2 === 0 || round >= 3) {
+      const lim = camera.aspect < 0.7 ? 0.35 : camera.aspect < 1.1 ? 0.6 : 1.1; // keep it on screen on phones
+      S.hoopX = clamp(S.hoopX + rand(-0.7, 0.7), -lim, lim);
+      S.hoopZ = clamp(S.hoopZ + rand(-0.3, 0.6), -0.4, 1.0);
+    }
+    showIsland(pickFresh(MSG.requirements), 'req', '!', 3800);
+    fx.rimWob = 1;
+  } else if (Math.random() < CFG.referralChance) {
+    S.referral = true;
+    showIsland(pickFresh(MSG.referral).replace(/^🤝\s*/, ''), 'referral', '✓', 0);
+  } else if (Math.random() < CFG.ghostChance) {
+    S.ghostPlanned = true; // surprise, no warning
+  }
+  newBall();
+  S.phase = 'ready';
+}
+
+function endGame() {
+  S.phase = 'end'; hideIsland();
+  const acc = S.thrown ? Math.round((S.made / S.thrown) * 100) : 0;
+  const w = (label, value) => `<div class="widget"><span>${label}</span><b>${value}</b></div>`;
+  $('endStats').innerHTML =
+    w('Score', S.score) + w('Made', `${S.made}/${S.thrown}`) + w('Accuracy', acc + '%') +
+    w('Best Streak', S.bestStreak) + w('Networking', S.banks) + w('On the Floor', S.thrown - S.made);
+  const rank = RANKS.find(r => S.score <= r.max);
+  const now = new Date();
+  const pending = S.score >= 25;
+  const date = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  $('letter').innerHTML = `
+    <div class="lh">
+      <div class="co">SYNERGIX GLOBAL HOLDINGS<small>1 Corporate Way, Suite 404 · Human Resources</small></div>
+      <div class="mark">S</div>
+    </div>
+    <hr>
+    <div class="date">${date}</div>
+    <div class="to">Whatever Your Name Is<br>Currently: Open to Work</div>
+    <p>Dear Whatever Your Name Is,</p>
+    <p>After ${S.thrown} applications and careful review by an algorithm nobody understands, we are pleased to offer you the position of:</p>
+    <div class="role">${rank.title}</div>
+    <div class="note">${rank.note}</div>
+    <table>
+      <tr><td>Salary</td><td>Competitive (with other unpaid roles)</td></tr>
+      <tr><td>Benefits</td><td>Pizza Friday, one slice, shared</td></tr>
+      <tr><td>Start date</td><td>After six more interview rounds</td></tr>
+    </table>
+    <p>Sincerely,</p>
+    <div class="sign">The Talent Team</div>
+    <div class="who">Talent Acquisition, Synergix Global Holdings</div>
+    <div class="stamp ${pending ? 'meh' : 'bad'}">${pending ? 'Pending approval' : 'Offer rescinded'}</div>`;
+  $('end').classList.add('show');
+  fitEnd();
+}
+
+/* Shrink the end sheet to fit the window, so nothing needs scrolling */
+function fitEnd() {
+  const el = document.querySelector('#end .endsheet');
+  if (!$('end').classList.contains('show')) return;
+  el.style.transform = 'translate(-50%, -50%)';
+  const r = el.getBoundingClientRect();
+  const k = Math.min(1, (window.innerHeight - 20) / r.height, (window.innerWidth - 16) / r.width);
+  el.style.transform = `translate(-50%, -50%) scale(${k})`;
+}
+window.addEventListener('resize', () => fitEnd());
+
+/* =====================================================================
+   PHYSICS (sphere vs. points, rings and boxes)
+   ===================================================================== */
+const tmp = new V3();
+
+/* Push the ball out of a round obstacle at q (radius rad) and bounce */
+function contactPoint(q, rad, rest, kind) {
+  const R = CFG.ballR, d = tmp.subVectors(ball.p, q), d2 = d.lengthSq(), rr = R + rad;
+  if (d2 >= rr * rr || d2 < 1e-12) return false;
+  const n = d.multiplyScalar(1 / Math.sqrt(d2));
+  ball.p.copy(q).addScaledVector(n, rr);
+  const vn = ball.v.dot(n);
+  if (vn < 0) {
+    const nx = n.x, ny = n.y, nz = n.z;
+    // tangential part keeps 90%, normal part reflects with restitution
+    ball.v.x = (ball.v.x - vn * nx) * 0.9 - vn * rest * nx;
+    ball.v.y = (ball.v.y - vn * ny) * 0.9 - vn * rest * ny;
+    ball.v.z = (ball.v.z - vn * nz) * 0.9 - vn * rest * nz;
+    ball.w.multiplyScalar(0.7).add(new V3(rand(-4, 4), rand(-4, 4), rand(-4, 4)));
+    impact(kind, -vn, q);
+  }
+  return true;
+}
+/* Horizontal ring (rim, can lip): nearest point on the circle, then as a point */
+function contactRing(c, R, tube, rest, kind) {
+  const hx = ball.p.x - c.x, hz = ball.p.z - c.z, h = Math.hypot(hx, hz);
+  const ux = h < 1e-6 ? 1 : hx / h, uz = h < 1e-6 ? 0 : hz / h;
+  return contactPoint(new V3(c.x + ux * R, c.y, c.z + uz * R), tube, rest, kind);
+}
+/* Axis-aligned box (backboard) */
+function contactBox(min, max, rest, kind) {
+  const q = new V3(clamp(ball.p.x, min.x, max.x), clamp(ball.p.y, min.y, max.y), clamp(ball.p.z, min.z, max.z));
+  if (q.equals(ball.p)) q.z = min.z;            // centre inside the slab: push back toward the player
+  return contactPoint(q, 0, rest, kind);
+}
+
+function impact(kind, speed, q) {
+  if (speed < 0.4) return;
+  const s = speed / 8;
+  if (kind === 'rim') {
+    Sound.clank(s); fx.rimWob = Math.max(fx.rimWob, 0.3 + s * 0.5);
+    fx.net.vx += rand(-0.8, 0.8) * s * 3; fx.net.vz += rand(-0.8, 0.8) * s * 3;
+  } else if (kind === 'board') {
+    Sound.board(s);
+    if (q.y > RIM_Y + 0.02) ball.touchedBoard = true;   // bank shot off the stickers
+  } else if (kind === 'can') Sound.clank(s * 0.5);
+}
+
+function stepBall(dt) {
+  const R = CFG.ballR, g = geom();
+  ball.v.y -= CFG.gravity * dt;
+  ball.v.multiplyScalar(1 - CFG.airDrag * dt);
+  const prevY = ball.p.y;
+  ball.p.addScaledVector(ball.v, dt);
+
+  // Hoop parts (switched off while "Ghosted")
+  if (!S.ghostActive) {
+    contactRing(g.rimC, g.rimR, CFG.rimTube, CFG.rimRest, 'rim');
+    contactBox(new V3(g.ox - BOARD.w / 2, BOARD.y0, g.bz), new V3(g.ox + BOARD.w / 2, BOARD.y1, g.bz + BOARD.t), CFG.boardRest, 'board');
+    const hd = Math.hypot(ball.p.x - g.rimC.x, ball.p.z - g.rimC.z);
+    if (!ball.scored && prevY >= RIM_Y && ball.p.y < RIM_Y && ball.v.y < 0 && hd < g.rimR - CFG.rimTube) onScore();
+  }
+
+  // A made basket: the net catches it and drops it straight into the bin
+  if (ball.scored) {
+    const inNet = ball.p.y > RIM_Y - NET.depth;
+    const tgt = inNet ? g.rimC : g.canC, k = inNet ? 30 : 18;
+    ball.v.x += (tgt.x - ball.p.x) * k * dt; ball.v.z += (tgt.z - ball.p.z) * k * dt;
+    ball.v.x *= 1 - 6 * dt; ball.v.z *= 1 - 6 * dt;
+    if (inNet) ball.v.y *= 1 - 2.5 * dt;
+  }
+
+  // Trash can: lip, outer wall, or in through the top
+  const c = g.canC, hx = ball.p.x - c.x, hz = ball.p.z - c.z, rho = Math.hypot(hx, hz);
+  contactRing(new V3(c.x, CAN.h, c.z), CAN.rTop, CAN.lip, CFG.canRest, 'can');
+  if (ball.p.y < CAN.h && rho < CAN.rTop - R * 0.4 && (prevY >= CAN.h - 0.06 || ball.scored)) { enterCan(); return; }
+  if (ball.p.y < CAN.h && ball.p.y > 0) {
+    const Rw = lerp(CAN.rBot, CAN.rTop, ball.p.y / CAN.h);
+    if (rho < Rw + R && rho > Rw * 0.4) {
+      const ux = hx / rho, uz = hz / rho;
+      ball.p.x = c.x + ux * (Rw + R); ball.p.z = c.z + uz * (Rw + R);
+      const vr = ball.v.x * ux + ball.v.z * uz;
+      if (vr < 0) { ball.v.x -= (1 + CFG.canRest) * vr * ux; ball.v.z -= (1 + CFG.canRest) * vr * uz; impact('can', -vr, ball.p); }
+    }
+  }
+
+  // Floor
+  if (ball.p.y < R) {
+    ball.p.y = R;
+    if (ball.v.y < 0) {
+      if (ball.v.y < -1) Sound.floor(-ball.v.y / 8);
+      ball.v.y = -ball.v.y * CFG.floorRest;
+      if (ball.v.y < 0.35) ball.v.y = 0;
+      ball.v.x *= 0.82; ball.v.z *= 0.82;
+    }
+    ball.onFloor = true;
+  }
+  // Rolling friction (paper doesn't roll far)
+  if (ball.onFloor && ball.p.y <= R + 0.001) {
+    const hs = Math.hypot(ball.v.x, ball.v.z);
+    if (hs > 0) { const ns = Math.max(0, hs - 2.2 * dt); ball.v.x *= ns / hs; ball.v.z *= ns / hs; }
+  }
+}
+
+/* Springs: net sway, lid bounce; plus hoop moves / rim resizing / ghost fade */
+function stepEffects(dt) {
+  const n = fx.net;
+  n.vx += (-90 * n.x - 6 * n.vx) * dt; n.x += n.vx * dt;
+  n.vz += (-90 * n.z - 6 * n.vz) * dt; n.z += n.vz * dt;
+  n.vs += (-120 * n.s - 8 * n.vs) * dt; n.s += n.vs * dt;
+  const l = fx.lid;
+  l.v += (-120 * l.a - 6 * l.v) * dt; l.a += l.v * dt;
+  if (l.a < -1.0) { l.a = -1.0; l.v *= -0.4; }
+  fx.shake = Math.max(0, fx.shake - dt);
+  fx.rimWob = Math.max(0, fx.rimWob - dt * 1.5);
+  if (!S) return;
+  const e = 1 - Math.exp(-dt * 5);
+  S.rimCur = lerp(S.rimCur, S.rimR * (S.referral ? 1.5 : 1), e);
+  S.hoopXCur = lerp(S.hoopXCur, S.hoopX, e * 0.6);
+  S.hoopZCur = lerp(S.hoopZCur, S.hoopZ, e * 0.6);
+  S.hoopAlpha = lerp(S.hoopAlpha, S.ghostActive ? 0.06 : 1, 1 - Math.exp(-dt * 10));
+}
+
+/* One fixed physics tick */
+function update(dt) {
+  time += dt;
+  stepEffects(dt);
+  if (!S) return;
+  switch (S.phase) {
+    case 'intro':
+      if (intro) stepIntro(dt);
+      break;
+    case 'start':
+    case 'ready':
+      ball.spawnT = Math.min(1, ball.spawnT + dt * 4);
+      ball.p.copy(BALL_REST); ball.p.y += Math.sin(time * 2) * 0.008; // gentle idle bob
+      break;
+    case 'aiming': {
+      const { pull, side } = pullOf();
+      ball.p.copy(BALL_REST).add(new V3(side * 0.05, -0.1 * pull, -0.06 * pull));
+      updatePreview(aimState());
+      break;
+    }
+    case 'flying': {
+      ball.flightT += dt;
+      if (S.ghostPlanned && !S.ghostHappened && ball.flightT > 0.3) {
+        S.ghostActive = true; S.ghostHappened = true;
+        showIsland('Ghosted. The hoop stopped replying.', 'ghost', '…', 1600);
+        Sound.sad();
+      }
+      if (S.ghostActive && ball.flightT > 1.4) S.ghostActive = false;
+      stepBall(dt);
+      if (S.phase !== 'flying') break;
+      ball.mesh.rotateOnWorldAxis(tmp.copy(ball.w).normalize(), ball.w.length() * dt);
+      const sp = ball.v.length();
+      ball.stillT = sp < 0.12 ? ball.stillT + dt : 0;
+      const gone = Math.abs(ball.p.x) > 9 || ball.p.z > 14 || ball.p.z < -5;
+      if (ball.stillT > 0.35 || gone || ball.flightT > 9) { resolveThrow('miss'); break; }
+      if (ball.onFloor && ball.p.y <= CFG.ballR + 0.002) {      // roll on the floor
+        const hs = Math.hypot(ball.v.x, ball.v.z);
+        if (hs > 0.01) ball.w.set(ball.v.z, 0, -ball.v.x).multiplyScalar(1 / CFG.ballR);
+        else ball.w.multiplyScalar(0.9);
+      }
+      break;
+    }
+    case 'sinking': {
+      ball.sinkT += dt;
+      const c = geom().canC;
+      ball.p.x = lerp(ball.p.x, c.x, dt * 6); ball.p.z = lerp(ball.p.z, c.z, dt * 6);
+      ball.p.y = Math.max(0.2, ball.p.y - 3 * dt);
+      if (ball.sinkT > 0.3) resolveThrow(ball.scored ? 'score' : 'archived');
+      break;
+    }
+  }
+}
+
+/* Simulate the arc for the preview (ignores collisions). Colours tell you how good the line is:
+   green = through the hoop, orange = near the rim, red = wide, grey = short of the rim */
+function hidePreview() {
+  previewPts = [];
+  dots.forEach(d => (d.visible = false));
+  aimRing.visible = aimDisc.visible = floorMark.visible = false;
+}
+function updatePreview(a) {
+  hidePreview();
+  if (!a) return;
+  const g = geom();
+  const p = a.pos.clone(), v = a.vel.clone(), prev = new V3(), dt = 1 / 120;
+  const pts = [];
+  let cross = null, landed = null;
+  for (let i = 1; i <= 480; i++) {
+    prev.copy(p);
+    v.y -= CFG.gravity * dt; v.multiplyScalar(1 - CFG.airDrag * dt);
+    p.addScaledVector(v, dt);
+    if (i % 5 === 0) pts.push(p.clone());
+    if (!cross && prev.y >= RIM_Y && p.y < RIM_Y && v.y < 0) {
+      const t = (prev.y - RIM_Y) / (prev.y - p.y);
+      cross = prev.clone().lerp(p, t);
+    }
+    if (p.z > g.bz - 0.02 && p.y > BOARD.y0 - 0.2) break;      // would hit the backboard
+    if (cross && p.y < RIM_Y - 0.35) break;                     // a little past the rim, then stop
+    if (p.y <= CFG.ballR) { landed = p.clone(); landed.y = 0.005; break; }
+  }
+  // Rate the shot
+  if (cross) {
+    const hd = Math.hypot(cross.x - g.rimC.x, cross.z - g.rimC.z);
+    aimQuality = hd < g.rimR - CFG.rimTube - CFG.ballR * 0.35 ? 'good' : hd < g.rimR + CFG.ballR + 0.08 ? 'close' : 'off';
+  } else aimQuality = 'short';
+  const col = AIM_COLORS[aimQuality];
+
+  previewPts = pts;
+  if (cross) {
+    aimRing.position.copy(cross); aimRing.scale.setScalar(CFG.ballR); aimRing.material.color.setHex(col); aimRing.visible = true;
+    aimDisc.position.copy(cross); aimDisc.scale.setScalar(CFG.ballR); aimDisc.material.color.setHex(col); aimDisc.visible = true;
+  } else if (landed) {
+    floorMark.position.copy(landed); floorMark.scale.setScalar(CFG.ballR * 1.2); floorMark.visible = true;
+  }
+}
+
+/* =====================================================================
+   RENDER SYNC
+   ===================================================================== */
+function syncScene() {
+  if (!S) return;
+  const g = geom();
+  hoop.position.set(g.ox, 0, S.hoopZCur);
+  can.position.set(g.canC.x, 0, g.canC.z);
+
+  const wob = Math.sin(time * 60) * fx.rimWob * 0.006;
+  const s = g.rimR / CFG.rimR, rz = g.rimC.z - S.hoopZCur;
+  rim.scale.set(s, s, 1);
+  rim.position.set(0, RIM_Y + wob, rz);
+  bracket.position.set(0, RIM_Y - 0.01, (rz + g.rimR + BOARD.z) / 2 + 0.01);
+  bracket.scale.z = Math.max(0.5, (BOARD.z - (rz + g.rimR)) / 0.14 + 0.3);
+
+  // Net follows the rim; sways and stretches on springs
+  netGroup.position.set(0, RIM_Y + wob, rz);
+  netGroup.scale.set(s, 1 + fx.net.s * 0.2, s);
+  netGroup.rotation.set(-fx.net.z * 0.12, 0, fx.net.x * 0.12);
+
+  hoopMats.forEach(m => { m.opacity = m.userData.base * S.hoopAlpha; m.transparent = S.hoopAlpha < 0.99 || m.userData.base < 1; });
+  hoop.visible = S.hoopAlpha > 0.02;
+
+  lidHinge.rotation.x = 1.95 + fx.lid.a;
+
+  if (ball.mesh) {
+    ball.mesh.position.copy(ball.p);
+    let sc = 1;
+    if (S.phase === 'ready' || S.phase === 'start') sc = easeOutBack(ball.spawnT);
+    if (S.phase === 'flying') sc = 1 + Math.sin(time * 14) * 0.03;
+    if (S.phase === 'intro') sc = ball.mesh.scale.x;     // paper "breathes" as it crumples
+    ball.mesh.scale.setScalar(Math.max(0.01, sc));
+    if (S.phase === 'ready' || S.phase === 'start' || S.phase === 'aiming') ball.mesh.rotation.y += 0.004;
+  }
+
+  camera.position.copy(CAM_POS);
+  if (fx.shake > 0) camera.position.add(new V3(rand(-1, 1), rand(-1, 1), 0).multiplyScalar(fx.shake * 0.03));
+}
+function easeOutBack(t) { const c = 1.7; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); }
+
+/* 2D overlay: power ring + first-throw hint */
+function toScreen(p) {
+  const v = p.clone().project(camera);
+  return { x: (v.x + 1) / 2 * window.innerWidth, y: (1 - v.y) / 2 * window.innerHeight };
+}
+function ballScreenR() {
+  const d = camera.position.distanceTo(ball.p);
+  return CFG.ballR / d * (window.innerHeight / 2) / Math.tan(camera.fov * Math.PI / 360);
+}
+function drawOverlay() {
+  const w = window.innerWidth, h = window.innerHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  fx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+  fx2d.clearRect(0, 0, w, h);
+  if (!S || !ball.mesh) return;
+  const sp = toScreen(ball.p), r = ballScreenR();
+  if (S.phase === 'aiming' && aim && previewPts.length) {
+    // dotted arc: same on-screen size everywhere, shrinking gently toward the hoop
+    const hexA = '#' + AIM_COLORS[aimQuality].toString(16).padStart(6, '0');
+    const n = previewPts.length;
+    let lastX = -1e9, lastY = -1e9;
+    for (let i = 0; i < n; i++) {
+      const q = toScreen(previewPts[i]);
+      if (Math.hypot(q.x - sp.x, q.y - sp.y) < r + 22) continue;      // keep clear of the ball
+      if (Math.hypot(q.x - lastX, q.y - lastY) < 11) continue;        // even spacing on screen
+      lastX = q.x; lastY = q.y;
+      const t = i / Math.max(1, n - 1);
+      fx2d.globalAlpha = lerp(0.95, 0.55, t);
+      fx2d.fillStyle = '#fff';
+      fx2d.beginPath(); fx2d.arc(q.x, q.y, lerp(5.5, 3, t) + 1.5, 0, Math.PI * 2); fx2d.fill();
+      fx2d.fillStyle = hexA;   // whole arc takes the shot's colour
+      fx2d.beginPath(); fx2d.arc(q.x, q.y, lerp(5.5, 3, t), 0, Math.PI * 2); fx2d.fill();
+    }
+    fx2d.globalAlpha = 1;
+  }
+  if (S.phase === 'aiming' && aim) {
+    const { pull } = pullOf();
+    fx2d.lineWidth = 5; fx2d.lineCap = 'round';
+    fx2d.strokeStyle = 'rgba(120,120,128,.2)';
+    fx2d.beginPath(); fx2d.arc(sp.x, sp.y, r + 14, 0, Math.PI * 2); fx2d.stroke();
+    const hex = '#' + AIM_COLORS[aimQuality].toString(16).padStart(6, '0');
+    fx2d.strokeStyle = hex;
+    fx2d.beginPath(); fx2d.arc(sp.x, sp.y, r + 14, -Math.PI / 2, -Math.PI / 2 + pull * Math.PI * 2); fx2d.stroke();
+    // a small pill under the ball says what the line means
+    const label = { good: 'On target', close: 'Close: might clip the rim', off: 'Wide of the hoop', short: 'Too short' }[aimQuality];
+    fx2d.font = '600 13px "Helvetica Neue", Helvetica, Arial, sans-serif';
+    const tw = fx2d.measureText(label).width + 30, ty = sp.y + r + 26;
+    fx2d.fillStyle = 'rgba(255,255,255,.92)';
+    roundRect(fx2d, sp.x - tw / 2, ty, tw, 28, 14); fx2d.fill();
+    fx2d.strokeStyle = 'rgba(0,0,0,.08)'; fx2d.lineWidth = 1; fx2d.stroke();
+    fx2d.fillStyle = hex; fx2d.beginPath(); fx2d.arc(sp.x - tw / 2 + 14, ty + 14, 4, 0, Math.PI * 2); fx2d.fill();
+    fx2d.fillStyle = '#1d1d1f'; fx2d.textAlign = 'center'; fx2d.textBaseline = 'middle';
+    fx2d.fillText(label, sp.x + 6, ty + 14.5);
+  }
+  if (S.phase === 'ready' && S.thrown < 2 && ball.spawnT >= 1) {
+    const k = (time * 0.8) % 1;
+    const label = 'Pull down & release';
+    fx2d.font = '600 13px "Helvetica Neue", Helvetica, Arial, sans-serif';
+    const tw = fx2d.measureText(label).width + 24, ty = sp.y - r - 40;
+    fx2d.fillStyle = 'rgba(255,255,255,.75)';
+    roundRect(fx2d, sp.x - tw / 2, ty, tw, 28, 14); fx2d.fill();
+    fx2d.fillStyle = '#1d1d1f'; fx2d.textAlign = 'center'; fx2d.textBaseline = 'middle';
+    fx2d.fillText(label, sp.x, ty + 14.5);
+    fx2d.globalAlpha = 0.45 * (1 - k);
+    fx2d.fillStyle = '#0a84ff';
+    fx2d.beginPath(); fx2d.arc(sp.x, sp.y + k * 70, 10, 0, Math.PI * 2); fx2d.fill();
+    fx2d.globalAlpha = 1;
+  }
+}
+
+/* =====================================================================
+   UI: scoreboard, chat thread, island, floaters, sheets, mute
+   ===================================================================== */
+function updateHUD() {
+  if (!S) return;
+  $('st-score').querySelector('b').textContent = S.score;
+  $('st-streak').querySelector('b').textContent = S.streak;
+  $('st-made').querySelector('b').textContent = S.made;
+  $('st-sent').querySelector('b').innerHTML = `${S.thrown}<small>/${CFG.totalThrows}</small>`;
+}
+function bump(id) { const el = $(id); el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+
+/* Recruiter replies: one pop-up card at a time */
+let toastTimer = null;
+function showToast(text, kind = '') {
+  const t = $('toast');
+  t.className = kind;
+  t.querySelector('.avatar').textContent = kind === 'good' ? '🏀' : kind === 'ghost' ? '👻' : '📨';
+  t.querySelector('.from').textContent = pick(MSG.senders);
+  t.querySelector('.msg').textContent = text;
+  void t.offsetWidth; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+const Chat = { // thin adapter so the game loop stays the same
+  clear() { clearTimeout(toastTimer); $('toast').classList.remove('show'); },
+  sendApplication() {},
+  reply(text, read, ghosted) {
+    if (ghosted) showToast(pickFresh(MSG.ghost), 'ghost');
+    else showToast(text, read ? 'good' : '');
+  },
+};
+
+let islandTimer = null;
+function showIsland(text, kind, glyph, ms) {
+  const el = $('island');
+  el.className = kind;
+  el.querySelector('.dot').textContent = glyph;
+  el.querySelector('.txt').textContent = text;
+  void el.offsetWidth; el.classList.add('show');
+  clearTimeout(islandTimer);
+  if (ms) islandTimer = setTimeout(hideIsland, ms);
+}
+function hideIsland() { $('island').classList.remove('show'); }
+
+function floater(text, worldPos, color, small = false) {
+  const s = toScreen(worldPos), el = document.createElement('div');
+  el.className = 'floater' + (small ? ' small' : ''); el.textContent = text;
+  Object.assign(el.style, { left: s.x + 'px', top: s.y + 'px', color });
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1600);
+}
+
+// Mute toggle with SF-Symbols-like speaker glyphs
+const ICON_ON = '<svg viewBox="0 0 24 24" fill="none"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+const ICON_OFF = '<svg viewBox="0 0 24 24" fill="none"><path d="M4 9.5h3.2L12 5.5v13l-4.8-4H4z" fill="currentColor"/><path d="M16 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+try { Sound.muted = localStorage.getItem('resumeToss.muted') === '1'; } catch (_) {}
+function syncMute() { $('mute').innerHTML = Sound.muted ? ICON_OFF : ICON_ON; }
+syncMute();
+$('mute').addEventListener('click', () => {
+  Sound.init(); Sound.resume(); Sound.muted = !Sound.muted; syncMute();
+  try { localStorage.setItem('resumeToss.muted', Sound.muted ? '1' : '0'); } catch (_) {}
+});
+$('play').addEventListener('click', () => {
+  Sound.init(); Sound.resume(); Sound.crumple();
+  $('start').classList.remove('show'); newGame();
+});
+$('again').addEventListener('click', () => {
+  Sound.init(); Sound.resume(); Sound.crumple();
+  $('end').classList.remove('show'); newGame();
+});
+
+/* =====================================================================
+   RESIZE + MAIN LOOP (fixed 240 Hz physics, render every frame)
+   ===================================================================== */
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setSize(w, h, false);
+  fxCanvas.width = Math.round(w * dpr); fxCanvas.height = Math.round(h * dpr);
+  camera.aspect = w / h;
+  camera.fov = camera.aspect < 0.7 ? 66 : camera.aspect < 1.1 ? 60 : 56; // narrow screens see wider
+  camera.updateProjectionMatrix();
+  BALL_REST.y = camera.aspect < 0.7 ? 1.2 : 1.4;                         // keep the ball clear of the bin on phones
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+resize();
+
+// Idle scene behind the start sheet
+S = { phase: 'start', rimR: CFG.rimR, rimCur: CFG.rimR, referral: false, ghostActive: false, hoopAlpha: 1,
+      hoopX: 0, hoopZ: 0, hoopXCur: 0, hoopZCur: 0, thrown: 99 };
+makeStickers(); newBall();
+
+window.__rt = () => S; // debug hook: inspect state from the console
+
+let last = performance.now(), acc = 0;
+const STEP = 1 / 240;
+function frame(now) {
+  acc += Math.min(0.05, (now - last) / 1000); last = now;
+  while (acc >= STEP) { update(STEP); acc -= STEP; }
+  syncScene();
+  renderer.render(scene, camera);
+  drawOverlay();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
